@@ -33,3 +33,6 @@ client_secret_*.json
 *.pem
 *.crt
 *.key
+
+*.jpg
+*.mp4
