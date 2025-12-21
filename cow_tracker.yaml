@@ -1,9 +1,9 @@
 tracker_type: bytetrack
-track_high_thresh: 0.5
-track_low_thresh: 0.1
-new_track_thresh: 0.6
-track_buffer: 120        # จำ ID ได้นาน 120 เฟรม (ประมาณ 4 วิ)
-match_thresh: 0.7
+track_high_thresh: 0.3      # ลดลงเพื่อให้จับง่ายขึ้น (เดิม 0.5)
+track_low_thresh: 0.05      # ลดลงเพื่อให้เก็บตกกล่องที่ความมั่นใจต่ำ (เดิม 0.1)
+new_track_thresh: 0.4       # ลดลงเพื่อให้เริ่มแทร็กง่ายขึ้น (เดิม 0.6)
+track_buffer: 150           # จำได้นานขึ้น (เดิม 120)
+match_thresh: 0.8           # เพิ่มขึ้นเพื่อให้มั่นใจว่าเป็นตัวเดิมจริงๆ
 
 # --- ส่วนที่ต้องเพิ่ม (เพื่อแก้ Error) ---
 fuse_score: True        # ต้องมีบรรทัดนี้!

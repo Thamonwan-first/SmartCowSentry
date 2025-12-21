@@ -11,7 +11,7 @@ def mouse_callback(event, x, y, flags, param):
 # -------------------------------
 # เปิดไฟล์วิดีโอ
 # -------------------------------
-video_path = "F:\\Cow\\b2d58b44-9a5d-4eb6-972c-00a223d5ce7b.mp4"   # <--- ใส่ชื่อไฟล์ตรงนี้
+video_path = 0   # <--- ใส่ชื่อไฟล์ตรงนี้
 cap = cv2.VideoCapture(video_path)
 
 cv2.namedWindow("Video XY")

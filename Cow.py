@@ -8,25 +8,51 @@ import math
 import io
 
 # ================================
-# Raspberry Pi GPIO (PIR + Buzzer)
+# CONFIGURATION
+# ================================
+BUZZER_ACTIVE_HIGH = False  # <--- ถ้ามันร้องตลอด ให้ลองเปลี่ยนเป็น False
+TARGET_CLASS = 0           # 0 = Person, 19 = Cow
+
+# ================================
+# Raspberry Pi GPIO (RPi.GPIO Version)
 # ================================
 try:
-    from gpiozero import MotionSensor, Buzzer
-    # PIR Sensor -> GPIO 4
-    pir = MotionSensor(4)
+    import RPi.GPIO as GPIO
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+
+    # Buzzer -> GPIO 27 (Active High: 0V=เงียบ, 3.3V=ร้อง)
+    # เราต้องสั่ง 0V ทันทีที่รันโปรแกรมเพื่อให้เงียบ
+    GPIO.setup(27, GPIO.OUT)
+    GPIO.output(27, GPIO.LOW) # สั่ง LOW (0V) ทันที
     
-    # Buzzer -> GPIO 17
-    buzzer = Buzzer(17)
+    # PIR Sensor -> GPIO 4 (Input)
+    GPIO.setup(4, GPIO.IN)
+    
+    time.sleep(0.5) # รอให้ระบบไฟนิ่ง
+    GPIO.output(27, GPIO.LOW) # ย้ำอีกครั้งว่าให้เงียบ
     
     USE_GPIO = True
-    print("✔ เชื่อมต่อ GPIO (PIR + Buzzer) สำเร็จ")
-    
-    # Beep ยืนยันว่าระบบพร้อมทำงาน (ดังปี๊บสั้นๆ 2 ที)
-    buzzer.beep(on_time=0.1, off_time=0.1, n=2, background=True)
+    print(f"✔ GPIO Ready: ขา 27 ถูกสั่งเป็น LOW (0V) เพื่อปิดเสียง (Active High Mode)")
 
-except (ImportError, Exception):
+except (ImportError, Exception) as e:
     USE_GPIO = False
-    print("⚠️ ไม่พบ GPIO (อาจรันบน Windows หรือไม่ได้ต่อสาย) - ทำงานโหมดจำลอง")
+    print(f"⚠️ ไม่พบ GPIO หรือเกิดข้อผิดพลาด: {e}")
+
+# Wrapper Functions เพื่อให้โค้ดข้างล่างเรียกใช้ได้เหมือนเดิม
+def is_motion_detected():
+    if USE_GPIO:
+        return GPIO.input(4) == 1
+    return True
+
+def buzzer_beep():
+    if USE_GPIO:
+        # Active High: จ่ายไฟ 3.3V เพื่อร้อง
+        GPIO.output(27, GPIO.HIGH)
+        time.sleep(0.1)
+        # ดึงลง 0V เพื่อเงียบ
+        GPIO.output(27, GPIO.LOW)
+
 
 motion_active = False      # สถานะว่ามีการเคลื่อนไหวหรือไม่
 last_motion_time = 0
@@ -113,15 +139,15 @@ model = YOLO("yolov8n.pt")
 # Polygon
 # ================================
 polygon_points = [
-    (650, 400), (47, 300), (646, 180),
-    (850, 200), (900, 200), (1000, 350)
+    (300, 26), (559, 26), (559, 441),(300 ,441)
 ]
 polygon_np = np.array(polygon_points, np.int32)
 
 # ================================
 # Video
 # ================================
-cap = cv2.VideoCapture("F:\\SmartCowSentry\\b2d58b44-9a5d-4eb6-972c-00a223d5ce7b.mp4")
+#cap = cv2.VideoCapture("/home/th/cow_env/b2d58b44-9a5d-4eb6-972c-00a223d5ce7b.mp4")
+cap = cv2.VideoCapture(0)
 
 # ================================
 # Re-ID Storage
@@ -139,9 +165,36 @@ frame_count = 0
 print("🎉 System Started")
 
 
+def alert_worker(snapshot, cow_id, total_escaped):
+    """ฟังก์ชันแจ้งเตือนแบบแยก Thread ไม่ให้วิดีโอค้าง"""
+    print(f"🚀 เริ่มกระบวนการแจ้งเตือนสำหรับ ID {cow_id}...")
+    
+    send_telegram(f"🚨 ตรวจพบคนบุกรุก/อยู่นอกเขต! (รวมทั้งหมด: {total_escaped} คน)")
+
+    # 🔊 BUZZER ALARM!
+    if USE_GPIO:
+        # ร้อง 3 ครั้ง
+        for _ in range(3):
+            buzzer_beep()
+            time.sleep(0.1)
+
+    # ⚡ SNAPSHOT → UPLOAD TO DRIVE
+    filename = f"cow_escape_{int(time.time())}.jpg"
+    drive_id = upload_image_to_drive(snapshot, filename)
+
+    if drive_id:
+        url = f"https://drive.google.com/file/d/{drive_id}/view?usp=sharing"
+        msg = f"📸 Snapshot วัวหลุดคอก\n{url}"
+        send_telegram(msg)
+    
+    print(f"✅ แจ้งเตือนเสร็จสิ้น (ID {cow_id})")
+
 # ================================
 # Main Loop
 # ================================
+skip_frame_count = 0
+last_results = None  # เก็บผลลัพธ์ล่าสุดไว้วาดในเฟรมที่ข้าม
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -152,7 +205,7 @@ while True:
     # Check PIR Sensor (CM4 GPIO)
     # ------------------------
     if USE_GPIO:
-        if pir.motion_detected:
+        if is_motion_detected():
             if not motion_active:
                 print("🏃 ตรวจพบการเคลื่อนไหว! (PIR Activated)")
             last_motion_time = time.time()
@@ -166,31 +219,50 @@ while True:
         motion_active = True 
 
     frame_count += 1
+    
+    # วาด Polygon และ Status เสมอ (ไม่ว่าจะข้ามเฟรมหรือไม่)
     cv2.polylines(frame, [polygon_np.reshape((-1,1,2))], True, (0,255,0), 2)
-
-    # แสดงสถานะ PIR บนหน้าจอ
     status_text = "PIR: MOTION DETECTED" if motion_active else "PIR: IDLE (Power Saving)"
     status_color = (0, 255, 0) if motion_active else (100, 100, 100)
     cv2.putText(frame, status_text, (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
-    # ถ้าไม่มีการเคลื่อนไหว ให้แสดงแค่ภาพสด แต่ไม่ต้องรัน YOLO (ลดความร้อน CM4)
-    if not motion_active:
-        cv2.imshow("Cow Tracking + Drive Upload", frame)
-        if cv2.waitKey(1) & 0xFF == 27:
-            break
-        continue
+    # ถ้าไม่มีการเคลื่อนไหว (และใช้ GPIO) ให้แสดงแค่ภาพสด แต่ไม่ต้องรัน YOLO (ลดความร้อน CM4)
+    # [TEST MODE] ปิดเงื่อนไข PIR ชั่วคราว เพื่อเทสว่า YOLO ทำงานไหม
+    # if USE_GPIO and not motion_active:
+    #     # แสดงสถานะ Standby
+    #     cv2.putText(frame, "Standby: Waiting for Motion...", (50, 300), 
+    #                 cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+    #     cv2.imshow("Cow Tracking + Drive Upload", frame)
+    #     if cv2.waitKey(1) & 0xFF == 27:
+    #         break
+    #     continue
+
+    cv2.putText(frame, "TEST MODE: ALWAYS ON", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+    # ------------------------
+    # Frame Skipping Logic (Process every 2nd frame)
+    # ------------------------
+    skip_frame_count += 1
+    
+    if skip_frame_count % 2 == 0:
+        # ========================
+        # YOLO TRACKING (Update)
+        # ========================
+        results = model.track(frame, persist=True, tracker="cow_tracker.yaml", verbose=False, conf=0.3)
+        last_results = results 
+    else:
+        # เฟรมที่ข้าม: ใช้ผลลัพธ์เก่า
+        results = last_results
 
     # ========================
-    # YOLO TRACKING START
+    # Draw & Logic (Run on every frame using latest results)
     # ========================
-    results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
     current_frame_ids = set()
 
     if results and results[0].boxes is not None:
         for box in results[0].boxes:
-
             cls = int(box.cls[0])
-            if cls != 19:  # cow
+            if cls != 0:  # 0 = Person (เปลี่ยนเป็นคนเพื่อทดสอบ)
                 continue
 
             if box.id is None:
@@ -243,28 +315,23 @@ while True:
 
             if escaped_confirmed:
                 color = (0,0,255)
+                # Visual Feedback: แสดงข้อความ ALARM บนหน้าจอ
+                cv2.putText(frame, "ALARM! OUTSIDE", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
 
                 if final_id not in escaped_cows_ids:
                     escaped_cows_ids.add(final_id)
-                    send_telegram(f"🚨 ตรวจพบวัวหลุดคอก! (รวมทั้งหมด: {len(escaped_cows_ids)} ตัว)")
-
-                    # 🔊 BUZZER ALARM! (ดังรัวๆ 5 ครั้ง)
-                    if USE_GPIO:
-                        buzzer.beep(on_time=0.2, off_time=0.1, n=5, background=True)
-
-                    # ⚡ SNAPSHOT → UPLOAD TO DRIVE
+                    
+                    # แจ้งเตือนครั้งแรก (Telegram + รูป + เสียง)
                     snapshot = frame.copy()
-                    filename = f"cow_escape_{int(time.time())}.jpg"
-                    drive_id = upload_image_to_drive(snapshot, filename)
+                    t = threading.Thread(target=alert_worker, args=(snapshot, final_id, len(escaped_cows_ids)))
+                    t.start()
 
-                    if drive_id:
-                        url = f"https://drive.google.com/file/d/{drive_id}/view?usp=sharing"
-                        msg = f"📸 Snapshot วัวหลุดคอก\n{url}"
-                        send_telegram(msg)
-
+                # แจ้งเตือนซ้ำ (เฉพาะเสียง) ถ้ายังอยู่นอกเขตทุกๆ 0.5 วินาที
                 now = time.time()
-                if final_id not in last_alert or now - last_alert[final_id] > ALERT_COOLDOWN:
+                if final_id not in last_alert or now - last_alert[final_id] > 0.5:
                     last_alert[final_id] = now
+                    # เรียกเสียงร้องแบบไม่บล็อกโปรแกรม
+                    threading.Thread(target=buzzer_beep).start()
 
             # Draw box (No ID display)
             cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
