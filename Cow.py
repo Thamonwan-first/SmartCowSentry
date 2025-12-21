@@ -11,7 +11,7 @@ import io
 # CONFIGURATION
 # ================================
 BUZZER_ACTIVE_HIGH = False  # <--- ถ้ามันร้องตลอด ให้ลองเปลี่ยนเป็น False
-TARGET_CLASS = 0           # 0 = Person, 19 = Cow
+TARGET_CLASS = 19           # 0 = Person, 19 = Cow
 
 # ================================
 # Raspberry Pi GPIO (RPi.GPIO Version)
@@ -169,7 +169,7 @@ def alert_worker(snapshot, cow_id, total_escaped):
     """ฟังก์ชันแจ้งเตือนแบบแยก Thread ไม่ให้วิดีโอค้าง"""
     print(f"🚀 เริ่มกระบวนการแจ้งเตือนสำหรับ ID {cow_id}...")
     
-    send_telegram(f"🚨 ตรวจพบคนบุกรุก/อยู่นอกเขต! (รวมทั้งหมด: {total_escaped} คน)")
+    send_telegram(f"🚨 ตรวจพบวัวหลุดคอก! (รวมทั้งหมด: {total_escaped} ตัว)")
 
     # 🔊 BUZZER ALARM!
     if USE_GPIO:
@@ -227,17 +227,16 @@ while True:
     cv2.putText(frame, status_text, (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
     # ถ้าไม่มีการเคลื่อนไหว (และใช้ GPIO) ให้แสดงแค่ภาพสด แต่ไม่ต้องรัน YOLO (ลดความร้อน CM4)
-    # [TEST MODE] ปิดเงื่อนไข PIR ชั่วคราว เพื่อเทสว่า YOLO ทำงานไหม
-    # if USE_GPIO and not motion_active:
-    #     # แสดงสถานะ Standby
-    #     cv2.putText(frame, "Standby: Waiting for Motion...", (50, 300), 
-    #                 cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
-    #     cv2.imshow("Cow Tracking + Drive Upload", frame)
-    #     if cv2.waitKey(1) & 0xFF == 27:
-    #         break
-    #     continue
+    if USE_GPIO and not motion_active:
+        # แสดงสถานะ Standby
+        cv2.putText(frame, "Standby: Waiting for Motion...", (50, 300), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+        cv2.imshow("Cow Tracking + Drive Upload", frame)
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+        continue
 
-    cv2.putText(frame, "TEST MODE: ALWAYS ON", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    # cv2.putText(frame, "TEST MODE: ALWAYS ON", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
     # ------------------------
     # Frame Skipping Logic (Process every 2nd frame)
@@ -262,7 +261,7 @@ while True:
     if results and results[0].boxes is not None:
         for box in results[0].boxes:
             cls = int(box.cls[0])
-            if cls != 0:  # 0 = Person (เปลี่ยนเป็นคนเพื่อทดสอบ)
+            if cls != TARGET_CLASS:
                 continue
 
             if box.id is None:
