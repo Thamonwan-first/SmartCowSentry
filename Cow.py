@@ -8,6 +8,31 @@ import math
 import io
 
 # ================================
+# Raspberry Pi GPIO (PIR + Buzzer)
+# ================================
+try:
+    from gpiozero import MotionSensor, Buzzer
+    # PIR Sensor -> GPIO 4
+    pir = MotionSensor(4)
+    
+    # Buzzer -> GPIO 17
+    buzzer = Buzzer(17)
+    
+    USE_GPIO = True
+    print("✔ เชื่อมต่อ GPIO (PIR + Buzzer) สำเร็จ")
+    
+    # Beep ยืนยันว่าระบบพร้อมทำงาน (ดังปี๊บสั้นๆ 2 ที)
+    buzzer.beep(on_time=0.1, off_time=0.1, n=2, background=True)
+
+except (ImportError, Exception):
+    USE_GPIO = False
+    print("⚠️ ไม่พบ GPIO (อาจรันบน Windows หรือไม่ได้ต่อสาย) - ทำงานโหมดจำลอง")
+
+motion_active = False      # สถานะว่ามีการเคลื่อนไหวหรือไม่
+last_motion_time = 0
+MOTION_TIMEOUT = 5.0       # ให้ YOLO ทำงานต่ออีก 5 วินาทีหลังการเคลื่อนไหวหยุด
+
+# ================================
 # Google Drive API (Upload จาก RAM)
 # ================================
 from googleapiclient.discovery import build
@@ -96,7 +121,7 @@ polygon_np = np.array(polygon_points, np.int32)
 # ================================
 # Video
 # ================================
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture("F:\\SmartCowSentry\\b2d58b44-9a5d-4eb6-972c-00a223d5ce7b.mp4")
 
 # ================================
 # Re-ID Storage
@@ -123,9 +148,41 @@ while True:
         print("⚠ วิดีโอจบแล้ว")
         break
 
+    # ------------------------
+    # Check PIR Sensor (CM4 GPIO)
+    # ------------------------
+    if USE_GPIO:
+        if pir.motion_detected:
+            if not motion_active:
+                print("🏃 ตรวจพบการเคลื่อนไหว! (PIR Activated)")
+            last_motion_time = time.time()
+            motion_active = True
+        
+        # ตรวจสอบว่าหมดเวลา Motion หรือยัง (Cooldown)
+        if time.time() - last_motion_time > MOTION_TIMEOUT:
+            motion_active = False
+    else:
+        # ถ้าไม่มี Sensor ให้ทำงานตลอดเวลา
+        motion_active = True 
+
     frame_count += 1
     cv2.polylines(frame, [polygon_np.reshape((-1,1,2))], True, (0,255,0), 2)
 
+    # แสดงสถานะ PIR บนหน้าจอ
+    status_text = "PIR: MOTION DETECTED" if motion_active else "PIR: IDLE (Power Saving)"
+    status_color = (0, 255, 0) if motion_active else (100, 100, 100)
+    cv2.putText(frame, status_text, (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+
+    # ถ้าไม่มีการเคลื่อนไหว ให้แสดงแค่ภาพสด แต่ไม่ต้องรัน YOLO (ลดความร้อน CM4)
+    if not motion_active:
+        cv2.imshow("Cow Tracking + Drive Upload", frame)
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+        continue
+
+    # ========================
+    # YOLO TRACKING START
+    # ========================
     results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
     current_frame_ids = set()
 
@@ -189,32 +246,33 @@ while True:
 
                 if final_id not in escaped_cows_ids:
                     escaped_cows_ids.add(final_id)
-                    send_telegram(f"🚨 วัวหลุดคอก! (ID {final_id})")
+                    send_telegram(f"🚨 ตรวจพบวัวหลุดคอก! (รวมทั้งหมด: {len(escaped_cows_ids)} ตัว)")
+
+                    # 🔊 BUZZER ALARM! (ดังรัวๆ 5 ครั้ง)
+                    if USE_GPIO:
+                        buzzer.beep(on_time=0.2, off_time=0.1, n=5, background=True)
 
                     # ⚡ SNAPSHOT → UPLOAD TO DRIVE
                     snapshot = frame.copy()
-                    filename = f"cow_{final_id}_{int(time.time())}.jpg"
+                    filename = f"cow_escape_{int(time.time())}.jpg"
                     drive_id = upload_image_to_drive(snapshot, filename)
 
                     if drive_id:
-                        send_telegram_snapshot_link(drive_id, final_id)
+                        url = f"https://drive.google.com/file/d/{drive_id}/view?usp=sharing"
+                        msg = f"📸 Snapshot วัวหลุดคอก\n{url}"
+                        send_telegram(msg)
 
                 now = time.time()
                 if final_id not in last_alert or now - last_alert[final_id] > ALERT_COOLDOWN:
                     last_alert[final_id] = now
 
-            # Draw box
+            # Draw box (No ID display)
             cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
-            cv2.putText(frame, f"ID:{final_id}", (x1, y1-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
     # Clean dead IDs
     for cid, (_,_,last_seen) in list(last_known_pos.items()):
         if frame_count - last_seen > 200:
             del last_known_pos[cid]
-
-    cv2.putText(frame, f"Escaped: {len(escaped_cows_ids)}",
-                (20,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 3)
 
     cv2.imshow("Cow Tracking + Drive Upload", frame)
     if cv2.waitKey(1) & 0xFF == 27:
