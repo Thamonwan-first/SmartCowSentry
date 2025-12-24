@@ -34,5 +34,3 @@ client_secret_*.json
 *.crt
 *.key
 
-*.jpg
-*.mp4
