@@ -36,11 +36,12 @@
 > *แผนภาพแสดงการทำงานของระบบ (System Flow) หรือ Architecture*
 
 ![Place Diagram Here](OS.png)
+[คลิกเพื่อดูรูปภาพ](https://drive.google.com/file/d/1eX5NxGCSTHvyUlY7Cmn07HVYJkJ80H8k/view?usp=drive_link)
 
 ## 6. 🎥 Demo / Preview
 > *คลิปแสดงตัวอย่างการทำงานเบื้องต้น*
 
-* **Video Link:** [คลิกเพื่อรับชม Video](OS_Video.mp4)
+* **Video Link:** [คลิกเพื่อรับชม Video](https://drive.google.com/file/d/1sAn85yAmfbdXVfNv_8uKda8rGe04fQ8j/view?usp=drive_link)
 
 ---
 
