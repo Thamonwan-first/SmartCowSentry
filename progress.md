@@ -1,7 +1,7 @@
 # 🚀 Project Progress Report
 
 > **Info:**
-> **Group:** 11 | **Section:** 1
+> **Group:** 11 | **Section:** 1  
 > **Date:** 14 December 2025
 
 ---
